@@ -1,0 +1,46 @@
+Analysis P1: Parallel Pi Approximation
+========================================
+
+1. Comparison of Variants
+-------------------------
+Programmability:
+- Sequential: Easiest to implement, no synchronization concerns.
+- OpenMP: Very easy to parallelize existing loops. Adding `#pragma omp parallel for reduction(+:sum)` handles thread creation, work distribution, and reduction automatically. It is the most concise parallel approach.
+- C++ std::thread: More verbose. Requires manual management of threads, work partitioning (calculating start/end indices), and reduction (collecting partial sums). However, it offers standard C++ portability without external compiler flags.
+- POSIX Threads (pthread): The most verbose and low-level. Requires defining a struct to pass arguments, manual thread creation/joining, and explicit casting of void pointers. It provides fine-grained control but is more error-prone and less type-safe than `std::thread`.
+
+Overhead:
+- OpenMP: Has some startup overhead for the thread pool, but it is generally highly optimized. The `reduction` clause is efficient.
+- std::thread: Creating threads (`std::thread`) has significant overhead if done repeatedly. In this implementation, threads are created once, so the overhead is amortized over the large calculation loop.
+- POSIX Threads: Similar overhead to `std::thread` (often `std::thread` is a wrapper around pthreads on Linux). The raw C API might have slightly less abstraction overhead, but in practice, it's negligible compared to the cost of thread creation itself.
+- Sequential: Zero parallel overhead.
+
+Performance:
+- For small N (e.g., 10^6), the overhead of creating threads might outweigh the benefits, leading to poor speedup or even slowdowns (Speedup < 1).
+- For large N (e.g., 10^8), all parallel versions should show significant speedup. OpenMP often performs slightly better or equal to manual implementations due to optimized scheduling.
+- Amdahl's Law Analysis (from benchmark output): The estimated serial fraction `f` indicates the limit of parallelization. If `f` is around 10-20%, the maximum theoretical speedup is limited (max speedup = 1/f). This suggests that for this specific problem size and hardware, we hit diminishing returns quickly.
+
+2. Cache Effects and Numerical Error
+------------------------------------
+Cache Effects:
+- Contiguous Iteration (Block Partitioning): In the `std::thread` implementation, we used block partitioning (each thread gets a contiguous range [start, end]). This is cache-friendly because the spatial locality of data access is preserved, although here we are computing values on the fly rather than reading an array. The main cache concern is "False Sharing" if threads write to adjacent memory addresses (e.g., a shared vector of partial sums). We mitigated this by using local variables for accumulation and only writing to the shared vector once at the end.
+- Cyclic Iteration: If we used cyclic partitioning (thread 0 does 0, P, 2P...; thread 1 does 1, P+1, 2P+1...), it might be less cache-friendly if we were accessing an array. For this computation-heavy task, the impact is minimal, but block partitioning is generally preferred to minimize false sharing risks if we were updating shared state more often.
+
+Numerical Error vs. N:
+- The midpoint rule error decreases as N increases. The error is proportional to O(1/N^2).
+- As N gets very large (e.g., > 10^9), floating-point round-off error (machine epsilon) might start to dominate or accumulate, potentially preventing further accuracy improvements.
+- Parallel summation can actually *reduce* round-off error compared to sequential summation because adding smaller partial sums together before adding to the grand total reduces the magnitude difference between the operands (pairwise summation effect).
+
+3. Algorithmic Improvement
+--------------------------
+Proposed Improvement: Simpson's Rule or Gauss-Legendre Quadrature.
+
+Argument:
+- The Midpoint rule is a 2nd-order method (Error ~ 1/N^2).
+- Simpson's Rule is a 4th-order method (Error ~ 1/N^4).
+- By switching to Simpson's Rule, we can achieve the same accuracy with a much smaller N.
+- For example, to get 10 digits of precision, Midpoint might need N=10^5, while Simpson's might only need N=100.
+- This drastically reduces the computational work required (Performance/Accuracy trade-off). We could get the result instantly on a single thread, making parallelization unnecessary for the same target accuracy, or allow us to compute billions of digits if parallelized.
+
+Another improvement: Adaptive Step Size.
+- Instead of a fixed h, we can refine the grid in regions where the function changes rapidly (though 4/(1+x^2) is quite smooth). This ensures we don't waste work on flat regions.
